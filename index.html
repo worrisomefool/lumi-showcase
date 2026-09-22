@@ -1,0 +1,2917 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+<title>Lumi - Interactive Companion POC</title>
+
+<style>
+* { box-sizing:border-box; }
+
+html,body {
+    margin:0;
+    width:100%;
+    height:100%;
+    overflow:hidden;
+    background:#101510;
+    font-family:Arial,sans-serif;
+}
+
+#stage {
+    position:absolute;
+
+    width:1080px;
+    height:1920px;
+
+    left:50%;
+    top:50%;
+
+    transform-origin:center;
+
+    overflow:hidden;
+
+    /*
+        SIMPLE SHOWCASE FIELD
+
+        Entire frame is ground.
+        No horizon.
+        No sky.
+        No objects.
+        No interaction targets.
+
+        The subtle texture gives the field some depth
+        without implying physical scenery.
+    */
+
+    background:
+        radial-gradient(
+            ellipse at 25% 20%,
+            rgba(255,255,255,0.045) 0%,
+            rgba(255,255,255,0) 28%
+        ),
+
+        radial-gradient(
+            ellipse at 78% 68%,
+            rgba(0,0,0,0.06) 0%,
+            rgba(0,0,0,0) 32%
+        ),
+
+        repeating-linear-gradient(
+            102deg,
+            rgba(255,255,255,0.018) 0px,
+            rgba(255,255,255,0.018) 2px,
+            rgba(0,0,0,0.018) 3px,
+            rgba(0,0,0,0.018) 7px
+        ),
+
+        linear-gradient(
+            180deg,
+            #6f9954 0%,
+            #648c49 28%,
+            #587e40 60%,
+            #4d7138 100%
+        );
+
+    border:none;
+}
+
+.lumi-layer {
+    position:absolute;
+    width:300px;
+    height:auto;
+    transform-origin:center bottom;
+    visibility:hidden;
+    user-select:none;
+    pointer-events:none;
+    will-change:left,top,transform;
+}
+
+#debug {
+    display:none !important;
+    position:fixed;
+    left:18px;
+    top:18px;
+    width:460px;
+    padding:15px 18px;
+    background:rgba(0,0,0,.90);
+    color:white;
+    border-radius:9px;
+    font-size:14px;
+    line-height:1.5;
+    z-index:100;
+}
+
+.big {
+    font-size:19px;
+    font-weight:bold;
+}
+
+.good { color:#8cffb0; }
+.exit { color:#ffcf70; }
+.offscreen { color:#ff9f70; }
+</style>
+
+<style id="lumi-copyright-style">
+    #copyright-notice {
+        position: fixed;
+        left: 50%;
+        bottom: 8px;
+        transform: translateX(-50%);
+        z-index: 9999;
+
+        font-family: Arial, sans-serif;
+        font-size: 11px;
+        font-weight: 400;
+        letter-spacing: 0.3px;
+
+        color: rgba(255, 255, 255, 0.65);
+        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.65);
+
+        white-space: nowrap;
+        pointer-events: none;
+        user-select: none;
+    }
+</style>
+</head>
+
+<body>
+
+<div id="stage">
+    <img id="lumiA" class="lumi-layer">
+    <img id="lumiB" class="lumi-layer">
+</div>
+
+<div id="debug">
+    <strong>Lumi Controller v11</strong><br>
+    <span class="good">NATURAL BOUNDARY EXITS</span>
+
+    <br><br>
+
+    World:
+    <span id="worldLabel" class="big">-</span>
+
+    <br>
+
+    Behaviour:
+    <span id="modeLabel" class="big">-</span>
+
+    <br>
+
+    Family:
+    <span id="familyLabel">-</span>
+
+    <br>
+
+    Pose:
+    <span id="poseLabel">-</span>
+
+    <br>
+
+    Sprite:
+    <span id="spriteLabel">-</span>
+
+    <br><br>
+
+    Direction:
+    <span id="directionLabel">-</span>
+
+    <br>
+
+    Journey:
+    <span id="journeyLabel">-</span>
+
+    <br>
+
+    Cycle:
+    <span id="cycleLabel">-</span>
+
+    <br>
+
+    Frame:
+    <span id="frameLabel">-</span>
+
+    <br><br>
+
+    X:
+    <span id="xLabel">-</span>
+
+    <br>
+
+    Y:
+    <span id="yLabel">-</span>
+
+    <br>
+
+    Depth:
+    <span id="depthLabel">-</span>
+
+    <br>
+
+    Scale:
+    <span id="scaleLabel">-</span>
+
+    <br><br>
+
+    Completed journeys:
+    <span id="journeysLabel">0</span>
+</div>
+
+
+<script>
+
+/* =========================================================
+   CONFIG
+   ========================================================= */
+
+const STAGE_WIDTH = 1080;
+const STAGE_HEIGHT = 1920;
+
+const FRAME_TIME = 160;
+const MOVEMENT_SPEED = 115;
+
+const TURN_BASE_TIME = 140;
+
+const STAND_BEFORE_SIT_TIME = 180;
+const STAND_BEFORE_WALK_TIME = 180;
+
+const IDLE_MIN_TIME = 1500;
+const IDLE_MAX_TIME = 3000;
+
+const OFFSCREEN_MIN_TIME = 2500;
+const OFFSCREEN_MAX_TIME = 6000;
+
+const VERTICAL_THRESHOLD = 0.45;
+
+const SIT_CHANCE = 0.42;
+
+
+/*
+    SAFE WANDERING AREA
+
+    This is NOT a physical wall.
+
+    It defines the area Lumi normally inhabits.
+
+    If a naturally generated journey attempts
+    to cross this area, that journey becomes
+    an EXIT rather than being clamped.
+*/
+
+const SAFE_LEFT = 180;
+const SAFE_RIGHT = 900;
+
+const SAFE_TOP = 450;
+const SAFE_BOTTOM = 1650;
+
+
+/*
+    Extra distance beyond the physical overlay
+    when Lumi exits.
+*/
+
+const EXIT_MARGIN = 80;
+
+
+/* =========================================================
+   FAMILY DATA
+   ========================================================= */
+
+const families = {
+
+    side: {
+
+        walkScale:1.000,
+        walkYOffset:0,
+
+        walkBase:
+            "assets/lumi/lumi_walk_base.png",
+
+        walk:[
+            "assets/lumi/walk test/walk 1.png",
+            "assets/lumi/walk test/walk 2.png",
+            "assets/lumi/walk test/walk 3.png",
+            "assets/lumi/walk test/walk 4.png",
+            "assets/lumi/walk test/walk 5.png",
+            "assets/lumi/walk test/walk 6.png",
+            "assets/lumi/walk test/walk 7.png",
+            "assets/lumi/walk test/walk 8.png"
+        ],
+
+        sit:
+            "assets/lumi/lumi_side.png",
+
+        sitScale:1.000,
+        sitYOffset:0
+    },
+
+
+    front: {
+
+        walkScale:0.780,
+        walkYOffset:0,
+
+        walkBase:
+            "assets/lumi/lumi_walk_front_base.png",
+
+        walk:[
+            "assets/lumi/walk test/front walk 1.png",
+            "assets/lumi/walk test/front walk 2.png",
+            "assets/lumi/walk test/front walk 3.png",
+            "assets/lumi/walk test/front walk 4.png",
+            "assets/lumi/walk test/front walk 5.png",
+            "assets/lumi/walk test/front walk 6.png"
+        ],
+
+        sit:
+            "assets/lumi/lumi_front.png",
+
+        sitScale:0.780,
+        sitYOffset:0
+    },
+
+
+    back: {
+
+        walkScale:0.687,
+        walkYOffset:10,
+
+        walkBase:
+            "assets/lumi/lumi_back_walk_base.png",
+
+        walk:[
+            "assets/lumi/walk test/back walk 4.png",
+            "assets/lumi/walk test/back walk 5.png",
+            "assets/lumi/walk test/back walk 6.png",
+            "assets/lumi/walk test/back walk 7.png",
+            "assets/lumi/walk test/back walk 8.png",
+            "assets/lumi/walk test/back walk 9.png",
+            "assets/lumi/walk test/back walk 10.png"
+        ],
+
+        sit:
+            "assets/lumi/lumi_back.png",
+
+        sitScale:0.687,
+        sitYOffset:10
+    }
+};
+
+
+/* =========================================================
+   DOM
+   ========================================================= */
+
+const stage =
+    document.getElementById("stage");
+
+const lumiA =
+    document.getElementById("lumiA");
+
+const lumiB =
+    document.getElementById("lumiB");
+
+
+/* =========================================================
+   STAGE RESIZE
+   ========================================================= */
+
+function resizeStage() {
+
+    const scale =
+        Math.min(
+            window.innerWidth / STAGE_WIDTH,
+            window.innerHeight / STAGE_HEIGHT
+        );
+
+    stage.style.transform =
+        `translate(-50%,-50%) scale(${scale})`;
+}
+
+window.addEventListener(
+    "resize",
+    resizeStage
+);
+
+resizeStage();
+
+
+/* =========================================================
+   HELPERS
+   ========================================================= */
+
+function random(min,max) {
+
+    return (
+        min +
+        Math.random() *
+        (max-min)
+    );
+}
+
+
+function randomChoice(array) {
+
+    return array[
+        Math.floor(
+            Math.random() *
+            array.length
+        )
+    ];
+}
+
+
+function clamp(value,min,max) {
+
+    return Math.max(
+        min,
+        Math.min(
+            max,
+            value
+        )
+    );
+}
+
+
+/* =========================================================
+   IMAGE PRELOAD
+   ========================================================= */
+
+const imageCache =
+    new Map();
+
+
+async function loadImage(src) {
+
+    const img =
+        new Image();
+
+    img.src =
+        src;
+
+
+    await new Promise(
+        (resolve,reject) => {
+
+            img.onload =
+                resolve;
+
+            img.onerror =
+                () => reject(
+                    new Error(
+                        `Failed to load ${src}`
+                    )
+                );
+        }
+    );
+
+
+    if (
+        typeof img.decode ===
+        "function"
+    ) {
+
+        try {
+            await img.decode();
+        }
+        catch(error) {}
+    }
+
+
+    imageCache.set(
+        src,
+        img
+    );
+}
+
+
+async function preloadEverything() {
+
+    const sources =
+        new Set();
+
+
+    for (
+        const family of
+        Object.values(families)
+    ) {
+
+        sources.add(
+            family.walkBase
+        );
+
+        sources.add(
+            family.sit
+        );
+
+
+        for (
+            const src of
+            family.walk
+        ) {
+
+            sources.add(src);
+        }
+    }
+
+
+    await Promise.all(
+        [...sources].map(loadImage)
+    );
+}
+
+
+/* =========================================================
+   DEPTH
+   ========================================================= */
+
+function depthToScale(depth) {
+
+    if (
+        depth >= 0
+    ) {
+
+        return (
+            1 -
+            depth * 0.42
+        );
+    }
+
+
+    return (
+        1 +
+        (-depth * 0.45)
+    );
+}
+
+
+/* =========================================================
+   STATE
+   ========================================================= */
+
+const state = {
+
+    x:540,
+    y:1050,
+    depth:0,
+
+    family:"side",
+    facingX:1,
+
+    directionName:"RIGHT →",
+
+    world:"ON_SCREEN",
+
+    mode:"SIT_IDLE",
+
+    frame:0,
+
+    journeyElapsed:0,
+    journeyDuration:1,
+    journeyCycles:1,
+
+    startX:540,
+    startY:1050,
+    startDepth:0,
+
+    targetX:540,
+    targetY:1050,
+    targetDepth:0,
+
+    journeyType:"-",
+
+    plan:null,
+
+    stateTimer:2000,
+
+    turnTargetFamily:null,
+    turnTimer:0,
+
+    completedJourneys:0,
+
+    exitEdge:null
+};
+
+
+/* =========================================================
+   DIRECTION
+   ========================================================= */
+
+function determineDirection(dx,dy) {
+
+    const absX =
+        Math.abs(dx);
+
+    const absY =
+        Math.abs(dy);
+
+
+    if (
+        absY >=
+        absX *
+        VERTICAL_THRESHOLD
+    ) {
+
+        if (
+            dy < 0
+        ) {
+
+            let name =
+                "UP ↑";
+
+
+            if (
+                dx < -50
+            ) {
+
+                name =
+                    "UP-LEFT ↖";
+            }
+
+            else if (
+                dx > 50
+            ) {
+
+                name =
+                    "UP-RIGHT ↗";
+            }
+
+
+            return {
+
+                family:"back",
+                facingX:1,
+                name
+            };
+        }
+
+
+        if (
+            dy > 0
+        ) {
+
+            let name =
+                "DOWN ↓";
+
+
+            if (
+                dx < -50
+            ) {
+
+                name =
+                    "DOWN-LEFT ↙";
+            }
+
+            else if (
+                dx > 50
+            ) {
+
+                name =
+                    "DOWN-RIGHT ↘";
+            }
+
+
+            return {
+
+                family:"front",
+                facingX:1,
+                name
+            };
+        }
+    }
+
+
+    if (
+        dx < 0
+    ) {
+
+        return {
+
+            family:"side",
+            facingX:-1,
+            name:"LEFT ←"
+        };
+    }
+
+
+    return {
+
+        family:"side",
+        facingX:1,
+        name:"RIGHT →"
+    };
+}
+
+
+/* =========================================================
+   RANDOM RAW WANDER DESTINATION
+   ========================================================= */
+
+/*
+    IMPORTANT:
+
+    This function deliberately DOES NOT clamp
+    the result.
+
+    First Lumi decides where she naturally
+    wants to walk.
+
+    Only afterwards do we determine whether
+    that means:
+
+        WANDER
+
+    or:
+
+        EXIT
+*/
+
+const journeyTypes = [
+
+    "left",
+    "right",
+
+    "up",
+    "down",
+
+    "up-left",
+    "up-right",
+
+    "down-left",
+    "down-right"
+];
+
+
+function createRawWanderDestination() {
+
+    const type =
+        randomChoice(
+            journeyTypes
+        );
+
+
+    let targetX =
+        state.x;
+
+    let targetY =
+        state.y;
+
+
+    switch(type) {
+
+        case "left":
+
+            targetX -=
+                random(250,450);
+
+            targetY +=
+                random(-50,50);
+
+            break;
+
+
+        case "right":
+
+            targetX +=
+                random(250,450);
+
+            targetY +=
+                random(-50,50);
+
+            break;
+
+
+        case "up":
+
+            targetX +=
+                random(-50,50);
+
+            targetY -=
+                random(280,500);
+
+            break;
+
+
+        case "down":
+
+            targetX +=
+                random(-50,50);
+
+            targetY +=
+                random(280,500);
+
+            break;
+
+
+        case "up-left":
+
+            targetX -=
+                random(200,400);
+
+            targetY -=
+                random(250,480);
+
+            break;
+
+
+        case "up-right":
+
+            targetX +=
+                random(200,400);
+
+            targetY -=
+                random(250,480);
+
+            break;
+
+
+        case "down-left":
+
+            targetX -=
+                random(200,400);
+
+            targetY +=
+                random(250,480);
+
+            break;
+
+
+        case "down-right":
+
+            targetX +=
+                random(200,400);
+
+            targetY +=
+                random(250,480);
+
+            break;
+    }
+
+
+    return {
+
+        type,
+        targetX,
+        targetY
+    };
+}
+
+
+/* =========================================================
+   BOUNDARY CROSSING
+   ========================================================= */
+
+/*
+    Determine which safe-area boundary the
+    proposed journey reaches FIRST.
+
+    This matters for diagonal movement.
+
+    Example:
+
+        Lumi chooses UP-LEFT.
+
+    If the trajectory reaches the top boundary
+    before the left boundary, it becomes a
+    TOP exit.
+
+    If it reaches the left boundary first,
+    it becomes a LEFT exit.
+*/
+
+function findFirstBoundaryCrossing(
+    startX,
+    startY,
+    endX,
+    endY
+) {
+
+    const dx =
+        endX -
+        startX;
+
+    const dy =
+        endY -
+        startY;
+
+
+    const candidates =
+        [];
+
+
+    /*
+        LEFT
+    */
+
+    if (
+        endX <
+        SAFE_LEFT &&
+        dx < 0
+    ) {
+
+        const t =
+            (
+                SAFE_LEFT -
+                startX
+            ) / dx;
+
+
+        if (
+            t >= 0 &&
+            t <= 1
+        ) {
+
+            candidates.push({
+                edge:"left",
+                t
+            });
+        }
+    }
+
+
+    /*
+        RIGHT
+    */
+
+    if (
+        endX >
+        SAFE_RIGHT &&
+        dx > 0
+    ) {
+
+        const t =
+            (
+                SAFE_RIGHT -
+                startX
+            ) / dx;
+
+
+        if (
+            t >= 0 &&
+            t <= 1
+        ) {
+
+            candidates.push({
+                edge:"right",
+                t
+            });
+        }
+    }
+
+
+    /*
+        TOP
+    */
+
+    if (
+        endY <
+        SAFE_TOP &&
+        dy < 0
+    ) {
+
+        const t =
+            (
+                SAFE_TOP -
+                startY
+            ) / dy;
+
+
+        if (
+            t >= 0 &&
+            t <= 1
+        ) {
+
+            candidates.push({
+                edge:"top",
+                t
+            });
+        }
+    }
+
+
+    /*
+        BOTTOM
+    */
+
+    if (
+        endY >
+        SAFE_BOTTOM &&
+        dy > 0
+    ) {
+
+        const t =
+            (
+                SAFE_BOTTOM -
+                startY
+            ) / dy;
+
+
+        if (
+            t >= 0 &&
+            t <= 1
+        ) {
+
+            candidates.push({
+                edge:"bottom",
+                t
+            });
+        }
+    }
+
+
+    if (
+        candidates.length === 0
+    ) {
+
+        return null;
+    }
+
+
+    candidates.sort(
+        (a,b) =>
+            a.t -
+            b.t
+    );
+
+
+    return candidates[0];
+}
+
+
+/* =========================================================
+   FOOTPRINT
+   ========================================================= */
+
+function getFamilyFootprint(
+    familyName,
+    depth
+) {
+
+    const family =
+        families[
+            familyName
+        ];
+
+
+    const image =
+        imageCache.get(
+            family.walkBase
+        );
+
+
+    const scale =
+        depthToScale(depth) *
+        family.walkScale;
+
+
+    const width =
+        300 *
+        scale;
+
+
+    const ratio =
+        image.naturalHeight /
+        image.naturalWidth;
+
+
+    const height =
+        300 *
+        ratio *
+        scale;
+
+
+    return {
+
+        width,
+        height
+    };
+}
+
+
+/* =========================================================
+   WANDER -> POSSIBLE NATURAL EXIT
+   ========================================================= */
+
+function createWanderPlan() {
+
+    const raw =
+        createRawWanderDestination();
+
+
+    const crossing =
+        findFirstBoundaryCrossing(
+
+            state.x,
+            state.y,
+
+            raw.targetX,
+            raw.targetY
+        );
+
+
+    /*
+        If the proposed walk remains inside
+        Lumi's safe roaming area, it is simply
+        a normal wander journey.
+    */
+
+    if (
+        !crossing
+    ) {
+
+        const targetDepth =
+            clamp(
+                state.depth +
+                random(
+                    -0.22,
+                    0.22
+                ),
+
+                -0.40,
+                0.70
+            );
+
+
+        const direction =
+            determineDirection(
+
+                raw.targetX -
+                state.x,
+
+                raw.targetY -
+                state.y
+            );
+
+
+        return {
+
+            kind:"WANDER",
+
+            type:raw.type,
+
+            targetX:
+                raw.targetX,
+
+            targetY:
+                raw.targetY,
+
+            targetDepth,
+
+            family:
+                direction.family,
+
+            facingX:
+                direction.facingX,
+
+            directionName:
+                direction.name
+        };
+    }
+
+
+    /*
+        The natural wander trajectory wants to
+        leave the safe area.
+
+        Promote it into a committed exit.
+    */
+
+    return createExitFromTrajectory(
+        raw,
+        crossing.edge
+    );
+}
+
+
+/* =========================================================
+   NATURAL EXIT
+   ========================================================= */
+
+function createExitFromTrajectory(
+    raw,
+    edge
+) {
+
+    const dx =
+        raw.targetX -
+        state.x;
+
+    const dy =
+        raw.targetY -
+        state.y;
+
+
+    /*
+        Determine the family from the ACTUAL
+        direction Lumi was already trying to
+        travel.
+
+        This means a diagonal walk remains a
+        diagonal-facing movement rather than
+        suddenly becoming a different arbitrary
+        exit direction.
+    */
+
+    const direction =
+        determineDirection(
+            dx,
+            dy
+        );
+
+
+    const footprint =
+        getFamilyFootprint(
+            direction.family,
+            state.depth
+        );
+
+
+    let targetX =
+        raw.targetX;
+
+    let targetY =
+        raw.targetY;
+
+
+    /*
+        Extend the SAME trajectory until Lumi
+        is safely outside the physical stage.
+
+        We use a multiplier on the original
+        direction vector rather than replacing
+        the journey with a new straight-line
+        edge movement.
+    */
+
+    let multiplier =
+        1;
+
+
+    if (
+        edge === "left"
+    ) {
+
+        const outsideX =
+            -(
+                footprint.width / 2 +
+                EXIT_MARGIN
+            );
+
+
+        multiplier =
+            (
+                outsideX -
+                state.x
+            ) / dx;
+    }
+
+
+    else if (
+        edge === "right"
+    ) {
+
+        const outsideX =
+            STAGE_WIDTH +
+            footprint.width / 2 +
+            EXIT_MARGIN;
+
+
+        multiplier =
+            (
+                outsideX -
+                state.x
+            ) / dx;
+    }
+
+
+    else if (
+        edge === "top"
+    ) {
+
+        const outsideY =
+            -(
+                footprint.height +
+                EXIT_MARGIN
+            );
+
+
+        multiplier =
+            (
+                outsideY -
+                state.y
+            ) / dy;
+    }
+
+
+    else {
+
+        const outsideY =
+            STAGE_HEIGHT +
+            footprint.height +
+            EXIT_MARGIN;
+
+
+        multiplier =
+            (
+                outsideY -
+                state.y
+            ) / dy;
+    }
+
+
+    /*
+        multiplier should normally be > 1.
+
+        Guard against any numerical oddity.
+    */
+
+    multiplier =
+        Math.max(
+            1,
+            multiplier
+        );
+
+
+    targetX =
+        state.x +
+        dx *
+        multiplier;
+
+
+    targetY =
+        state.y +
+        dy *
+        multiplier;
+
+
+    return {
+
+        kind:"EXIT",
+
+        type:
+            `natural-exit-${edge}`,
+
+        edge,
+
+        targetX,
+        targetY,
+
+        /*
+            Keep depth stable throughout exit.
+        */
+
+        targetDepth:
+            state.depth,
+
+        family:
+            direction.family,
+
+        facingX:
+            direction.facingX,
+
+        directionName:
+            direction.name
+    };
+}
+
+
+/* =========================================================
+   ENTRANCE
+   ========================================================= */
+
+function createEntrancePlan() {
+
+    /*
+        Entrance is independent of the previous
+        exit.
+
+        Lumi can leave one edge and later return
+        from another.
+    */
+
+    const edge =
+        randomChoice([
+            "left",
+            "right",
+            "top",
+            "bottom"
+        ]);
+
+
+    const targetDepth =
+        random(
+            -0.20,
+            0.45
+        );
+
+
+    let familyName;
+
+
+    if (
+        edge === "left" ||
+        edge === "right"
+    ) {
+
+        familyName =
+            "side";
+    }
+
+    else if (
+        edge === "top"
+    ) {
+
+        /*
+            Coming DOWN from top = FRONT.
+        */
+
+        familyName =
+            "front";
+    }
+
+    else {
+
+        /*
+            Coming UP from bottom = BACK.
+        */
+
+        familyName =
+            "back";
+    }
+
+
+    const footprint =
+        getFamilyFootprint(
+            familyName,
+            targetDepth
+        );
+
+
+    let startX;
+    let startY;
+
+    let targetX;
+    let targetY;
+
+
+    if (
+        edge === "left"
+    ) {
+
+        startX =
+            -(
+                footprint.width / 2 +
+                EXIT_MARGIN
+            );
+
+
+        startY =
+            random(
+                SAFE_TOP,
+                SAFE_BOTTOM
+            );
+
+
+        targetX =
+            random(
+                SAFE_LEFT + 80,
+                430
+            );
+
+
+        targetY =
+            clamp(
+                startY +
+                random(-100,100),
+
+                SAFE_TOP + 50,
+                SAFE_BOTTOM - 50
+            );
+    }
+
+
+    else if (
+        edge === "right"
+    ) {
+
+        startX =
+            STAGE_WIDTH +
+            footprint.width / 2 +
+            EXIT_MARGIN;
+
+
+        startY =
+            random(
+                SAFE_TOP,
+                SAFE_BOTTOM
+            );
+
+
+        targetX =
+            random(
+                650,
+                SAFE_RIGHT - 80
+            );
+
+
+        targetY =
+            clamp(
+                startY +
+                random(-100,100),
+
+                SAFE_TOP + 50,
+                SAFE_BOTTOM - 50
+            );
+    }
+
+
+    else if (
+        edge === "top"
+    ) {
+
+        startX =
+            random(
+                SAFE_LEFT,
+                SAFE_RIGHT
+            );
+
+
+        startY =
+            -(
+                footprint.height +
+                EXIT_MARGIN
+            );
+
+
+        targetX =
+            clamp(
+                startX +
+                random(-120,120),
+
+                SAFE_LEFT + 50,
+                SAFE_RIGHT - 50
+            );
+
+
+        targetY =
+            random(
+                SAFE_TOP + 80,
+                760
+            );
+    }
+
+
+    else {
+
+        startX =
+            random(
+                SAFE_LEFT,
+                SAFE_RIGHT
+            );
+
+
+        startY =
+            STAGE_HEIGHT +
+            footprint.height +
+            EXIT_MARGIN;
+
+
+        targetX =
+            clamp(
+                startX +
+                random(-120,120),
+
+                SAFE_LEFT + 50,
+                SAFE_RIGHT - 50
+            );
+
+
+        targetY =
+            random(
+                1340,
+                SAFE_BOTTOM - 80
+            );
+    }
+
+
+    /*
+        Lumi is completely invisible while
+        OFF_SCREEN, so moving her to the new
+        entrance start point cannot be seen.
+    */
+
+    state.x =
+        startX;
+
+    state.y =
+        startY;
+
+    state.depth =
+        targetDepth;
+
+
+    const direction =
+        determineDirection(
+
+            targetX -
+            startX,
+
+            targetY -
+            startY
+        );
+
+
+    return {
+
+        kind:"ENTER",
+
+        type:
+            `enter-${edge}`,
+
+        edge,
+
+        targetX,
+        targetY,
+        targetDepth,
+
+        family:
+            direction.family,
+
+        facingX:
+            direction.facingX,
+
+        directionName:
+            direction.name
+    };
+}
+
+
+/* =========================================================
+   PLAN REQUEST
+   ========================================================= */
+
+function requestPlan(
+    plan,
+    fromSitting = false
+) {
+
+    state.plan =
+        plan;
+
+
+    state.journeyType =
+        plan.type;
+
+
+    if (
+        fromSitting
+    ) {
+
+        state.mode =
+            "PRE_WALK";
+
+
+        state.stateTimer =
+            STAND_BEFORE_WALK_TIME;
+
+
+        return;
+    }
+
+
+    preparePlannedJourney();
+}
+
+
+/* =========================================================
+   PREPARE JOURNEY
+   ========================================================= */
+
+function preparePlannedJourney() {
+
+    const plan =
+        state.plan;
+
+
+    const familyChange =
+
+        state.family !==
+        plan.family;
+
+
+    const sideFlip =
+
+        state.family === "side" &&
+
+        plan.family === "side" &&
+
+        state.facingX !==
+        plan.facingX;
+
+
+    if (
+        familyChange ||
+        sideFlip
+    ) {
+
+        beginTurn(
+            plan.family
+        );
+    }
+
+    else {
+
+        startJourney();
+    }
+}
+
+
+/* =========================================================
+   PRE-WALK
+   ========================================================= */
+
+function updatePreWalk(dt) {
+
+    if (
+        state.mode !==
+        "PRE_WALK"
+    ) {
+
+        return;
+    }
+
+
+    state.stateTimer -=
+        dt;
+
+
+    if (
+        state.stateTimer <= 0
+    ) {
+
+        preparePlannedJourney();
+    }
+}
+
+
+/* =========================================================
+   TURN
+   ========================================================= */
+
+function beginTurn(targetFamily) {
+
+    state.mode =
+        "TURN";
+
+
+    state.turnTargetFamily =
+        targetFamily;
+
+
+    state.turnTimer =
+        0;
+}
+
+
+function updateTurn(dt) {
+
+    if (
+        state.mode !==
+        "TURN"
+    ) {
+
+        return;
+    }
+
+
+    state.turnTimer +=
+        dt;
+
+
+    if (
+        state.turnTimer <
+        TURN_BASE_TIME
+    ) {
+
+        return;
+    }
+
+
+    state.family =
+        state.turnTargetFamily;
+
+
+    state.facingX =
+        state.plan.facingX;
+
+
+    state.directionName =
+        state.plan.directionName;
+
+
+    state.turnTargetFamily =
+        null;
+
+
+    state.turnTimer =
+        0;
+
+
+    startJourney();
+}
+
+
+/* =========================================================
+   START SYNCHRONISED JOURNEY
+   ========================================================= */
+
+function startJourney() {
+
+    const plan =
+        state.plan;
+
+
+    state.family =
+        plan.family;
+
+
+    state.facingX =
+        plan.facingX;
+
+
+    state.directionName =
+        plan.directionName;
+
+
+    state.startX =
+        state.x;
+
+
+    state.startY =
+        state.y;
+
+
+    state.startDepth =
+        state.depth;
+
+
+    state.targetX =
+        plan.targetX;
+
+
+    state.targetY =
+        plan.targetY;
+
+
+    state.targetDepth =
+        plan.targetDepth;
+
+
+    const dx =
+        state.targetX -
+        state.startX;
+
+
+    const dy =
+        state.targetY -
+        state.startY;
+
+
+    const dz =
+        (
+            state.targetDepth -
+            state.startDepth
+        ) * 500;
+
+
+    const distance =
+        Math.max(
+
+            1,
+
+            Math.sqrt(
+
+                dx*dx +
+                dy*dy +
+                dz*dz
+            )
+        );
+
+
+    const cycleDuration =
+
+        families[
+            state.family
+        ].walk.length *
+
+        FRAME_TIME;
+
+
+    const idealDuration =
+
+        (
+            distance /
+            MOVEMENT_SPEED
+        ) * 1000;
+
+
+    /*
+        Whole gait cycles only.
+
+        Arrival therefore occurs exactly at a
+        cycle boundary.
+    */
+
+    state.journeyCycles =
+        Math.max(
+
+            1,
+
+            Math.ceil(
+                idealDuration /
+                cycleDuration
+            )
+        );
+
+
+    state.journeyDuration =
+
+        state.journeyCycles *
+        cycleDuration;
+
+
+    state.journeyElapsed =
+        0;
+
+
+    state.frame =
+        0;
+
+
+    state.mode =
+        "WALK";
+
+
+    if (
+        plan.kind ===
+        "EXIT"
+    ) {
+
+        state.world =
+            "EXITING";
+
+
+        state.exitEdge =
+            plan.edge;
+    }
+
+
+    else if (
+        plan.kind ===
+        "ENTER"
+    ) {
+
+        state.world =
+            "ENTERING";
+    }
+
+
+    else {
+
+        state.world =
+            "ON_SCREEN";
+    }
+
+
+    state.plan =
+        null;
+}
+
+
+/* =========================================================
+   MOVEMENT + GAIT — SAME CLOCK
+   ========================================================= */
+
+function updateJourney(dt) {
+
+    if (
+        state.mode !==
+        "WALK"
+    ) {
+
+        return;
+    }
+
+
+    state.journeyElapsed +=
+        dt;
+
+
+    const progress =
+        clamp(
+
+            state.journeyElapsed /
+            state.journeyDuration,
+
+            0,
+            1
+        );
+
+
+    state.x =
+        state.startX +
+        (
+            state.targetX -
+            state.startX
+        ) * progress;
+
+
+    state.y =
+        state.startY +
+        (
+            state.targetY -
+            state.startY
+        ) * progress;
+
+
+    state.depth =
+        state.startDepth +
+        (
+            state.targetDepth -
+            state.startDepth
+        ) * progress;
+
+
+    const family =
+        families[
+            state.family
+        ];
+
+
+    const totalFrameSteps =
+
+        Math.floor(
+            state.journeyElapsed /
+            FRAME_TIME
+        );
+
+
+    state.frame =
+
+        totalFrameSteps %
+        family.walk.length;
+
+
+    if (
+        progress >= 1
+    ) {
+
+        state.x =
+            state.targetX;
+
+
+        state.y =
+            state.targetY;
+
+
+        state.depth =
+            state.targetDepth;
+
+
+        state.frame =
+            0;
+
+
+        completeJourney();
+    }
+}
+
+
+/* =========================================================
+   JOURNEY COMPLETION
+   ========================================================= */
+
+function completeJourney() {
+
+    state.completedJourneys++;
+
+
+    /*
+        A natural exit has now reached a point
+        completely outside the physical stage.
+    */
+
+    if (
+        state.world ===
+        "EXITING"
+    ) {
+
+        state.world =
+            "OFF_SCREEN";
+
+
+        state.mode =
+            "OFFSCREEN_WAIT";
+
+
+        state.stateTimer =
+            random(
+                OFFSCREEN_MIN_TIME,
+                OFFSCREEN_MAX_TIME
+            );
+
+
+        return;
+    }
+
+
+    /*
+        A committed entrance only finishes once
+        Lumi has reached the interior destination.
+    */
+
+    if (
+        state.world ===
+        "ENTERING"
+    ) {
+
+        state.world =
+            "ON_SCREEN";
+
+
+        state.mode =
+            "PRE_SIT";
+
+
+        state.stateTimer =
+            STAND_BEFORE_SIT_TIME;
+
+
+        return;
+    }
+
+
+    /*
+        Normal on-screen journey.
+
+        No arbitrary EXIT_CHANCE exists now.
+
+        Lumi either sits...
+
+        or chooses another natural wander.
+
+        That next wander itself may become an
+        exit if it crosses the safe area.
+    */
+
+    if (
+        Math.random() <
+        SIT_CHANCE
+    ) {
+
+        state.mode =
+            "PRE_SIT";
+
+
+        state.stateTimer =
+            STAND_BEFORE_SIT_TIME;
+
+
+        return;
+    }
+
+
+    requestPlan(
+        createWanderPlan(),
+        false
+    );
+}
+
+
+/* =========================================================
+   PRE-SIT
+   ========================================================= */
+
+function updatePreSit(dt) {
+
+    if (
+        state.mode !==
+        "PRE_SIT"
+    ) {
+
+        return;
+    }
+
+
+    state.stateTimer -=
+        dt;
+
+
+    if (
+        state.stateTimer <= 0
+    ) {
+
+        state.mode =
+            "SIT_IDLE";
+
+
+        state.stateTimer =
+            random(
+                IDLE_MIN_TIME,
+                IDLE_MAX_TIME
+            );
+    }
+}
+
+
+/* =========================================================
+   SIT IDLE
+   ========================================================= */
+
+function updateSitIdle(dt) {
+
+    if (
+        state.mode !==
+        "SIT_IDLE"
+    ) {
+
+        return;
+    }
+
+
+    state.stateTimer -=
+        dt;
+
+
+    if (
+        state.stateTimer >
+        0
+    ) {
+
+        return;
+    }
+
+
+    /*
+        Sitting Lumi simply decides on another
+        natural journey.
+
+        If that journey points beyond the safe
+        roaming area, createWanderPlan()
+        automatically promotes it to EXIT.
+    */
+
+    requestPlan(
+        createWanderPlan(),
+        true
+    );
+}
+
+
+/* =========================================================
+   OFF-SCREEN WAIT
+   ========================================================= */
+
+function updateOffscreen(dt) {
+
+    if (
+        state.mode !==
+        "OFFSCREEN_WAIT"
+    ) {
+
+        return;
+    }
+
+
+    state.stateTimer -=
+        dt;
+
+
+    if (
+        state.stateTimer >
+        0
+    ) {
+
+        return;
+    }
+
+
+    const entrance =
+        createEntrancePlan();
+
+
+    state.plan =
+        entrance;
+
+
+    state.journeyType =
+        entrance.type;
+
+
+    /*
+        Lumi is invisible, so no visible turn
+        transition is required before entering.
+    */
+
+    state.family =
+        entrance.family;
+
+
+    state.facingX =
+        entrance.facingX;
+
+
+    state.directionName =
+        entrance.directionName;
+
+
+    startJourney();
+}
+
+
+/* =========================================================
+   VISUAL
+   ========================================================= */
+
+function getVisual() {
+
+    const family =
+        families[
+            state.family
+        ];
+
+
+    let src;
+    let spriteName;
+
+    let poseScale;
+    let yOffset;
+
+    let pose;
+
+
+    if (
+        state.mode ===
+        "SIT_IDLE"
+    ) {
+
+        src =
+            family.sit;
+
+
+        poseScale =
+            family.sitScale;
+
+
+        yOffset =
+            family.sitYOffset;
+
+
+        pose =
+            "SIT";
+
+
+        spriteName =
+            `${state.family.toUpperCase()} SIT`;
+    }
+
+
+    else if (
+        state.mode === "PRE_SIT" ||
+        state.mode === "PRE_WALK" ||
+        state.mode === "TURN" ||
+        state.mode === "OFFSCREEN_WAIT"
+    ) {
+
+        src =
+            family.walkBase;
+
+
+        poseScale =
+            family.walkScale;
+
+
+        yOffset =
+            family.walkYOffset;
+
+
+        pose =
+            "STAND";
+
+
+        spriteName =
+            `${state.family.toUpperCase()} BASE`;
+    }
+
+
+    else {
+
+        src =
+            family.walk[
+                state.frame %
+                family.walk.length
+            ];
+
+
+        poseScale =
+            family.walkScale;
+
+
+        yOffset =
+            family.walkYOffset;
+
+
+        pose =
+            "WALK";
+
+
+        if (
+            state.family ===
+            "side"
+        ) {
+
+            spriteName =
+                `SIDE WALK ${state.frame + 1}`;
+        }
+
+
+        else if (
+            state.family ===
+            "front"
+        ) {
+
+            spriteName =
+                `FRONT WALK ${state.frame + 1}`;
+        }
+
+
+        else {
+
+            spriteName =
+                `BACK WALK ${state.frame + 4}`;
+        }
+    }
+
+
+    const depthScale =
+        depthToScale(
+            state.depth
+        );
+
+
+    const finalScale =
+        depthScale *
+        poseScale;
+
+
+    let flip =
+        1;
+
+
+    if (
+        state.family ===
+        "side"
+    ) {
+
+        flip =
+            state.facingX;
+    }
+
+
+    return {
+
+        src,
+        spriteName,
+        pose,
+
+        x:
+            state.x,
+
+        y:
+            state.y +
+            yOffset,
+
+        depthScale,
+        poseScale,
+        finalScale,
+        yOffset,
+        flip
+    };
+}
+
+
+/* =========================================================
+   LOCKED ATOMIC DOUBLE-BUFFER RENDERER
+   ========================================================= */
+
+let visibleLayer =
+    lumiA;
+
+let hiddenLayer =
+    lumiB;
+
+let visibleSrc =
+    null;
+
+
+function applyVisualToLayer(
+    layer,
+    visual
+) {
+
+    layer.style.left =
+        `${visual.x}px`;
+
+
+    layer.style.top =
+        `${visual.y}px`;
+
+
+    layer.style.transform =
+        `
+        translate(-50%,-100%)
+        scale(
+            ${visual.flip * visual.finalScale},
+            ${visual.finalScale}
+        )
+        `;
+}
+
+
+function swapSprite(visual) {
+
+    const cached =
+        imageCache.get(
+            visual.src
+        );
+
+
+    if (
+        !cached
+    ) {
+
+        console.error(
+            "Missing cached sprite:",
+            visual.src
+        );
+
+        return;
+    }
+
+
+    hiddenLayer.style.visibility =
+        "hidden";
+
+
+    hiddenLayer.src =
+        cached.src;
+
+
+    /*
+        Sprite + scale + offset + flip are all
+        applied BEFORE the new image becomes
+        visible.
+
+        Do not change this renderer behaviour.
+    */
+
+    applyVisualToLayer(
+        hiddenLayer,
+        visual
+    );
+
+
+    hiddenLayer.style.visibility =
+        "visible";
+
+
+    visibleLayer.style.visibility =
+        "hidden";
+
+
+    const oldVisible =
+        visibleLayer;
+
+
+    visibleLayer =
+        hiddenLayer;
+
+
+    hiddenLayer =
+        oldVisible;
+
+
+    visibleSrc =
+        visual.src;
+}
+
+
+/* =========================================================
+   RENDER
+   ========================================================= */
+
+function render() {
+
+    const visual =
+        getVisual();
+
+
+    if (
+        visual.src !==
+        visibleSrc
+    ) {
+
+        swapSprite(
+            visual
+        );
+    }
+
+    else {
+
+        applyVisualToLayer(
+            visibleLayer,
+            visual
+        );
+    }
+
+
+    const worldLabel =
+        document.getElementById(
+            "worldLabel"
+        );
+
+
+    worldLabel.textContent =
+        state.world;
+
+
+    if (
+        state.world ===
+        "EXITING"
+    ) {
+
+        worldLabel.className =
+            "big exit";
+    }
+
+
+    else if (
+        state.world ===
+        "OFF_SCREEN"
+    ) {
+
+        worldLabel.className =
+            "big offscreen";
+    }
+
+
+    else {
+
+        worldLabel.className =
+            "big";
+    }
+
+
+    document
+        .getElementById("modeLabel")
+        .textContent =
+        state.mode;
+
+
+    document
+        .getElementById("familyLabel")
+        .textContent =
+        state.family.toUpperCase();
+
+
+    document
+        .getElementById("poseLabel")
+        .textContent =
+        visual.pose;
+
+
+    document
+        .getElementById("spriteLabel")
+        .textContent =
+        visual.spriteName;
+
+
+    document
+        .getElementById("directionLabel")
+        .textContent =
+        state.directionName;
+
+
+    document
+        .getElementById("journeyLabel")
+        .textContent =
+        state.journeyType;
+
+
+    document
+        .getElementById("cycleLabel")
+        .textContent =
+
+        state.mode ===
+        "WALK"
+
+        ? `${Math.min(
+            state.journeyCycles,
+            Math.floor(
+                state.journeyElapsed /
+                (
+                    families[
+                        state.family
+                    ].walk.length *
+                    FRAME_TIME
+                )
+            ) + 1
+        )}/${state.journeyCycles}`
+
+        : "-";
+
+
+    document
+        .getElementById("frameLabel")
+        .textContent =
+
+        visual.pose ===
+        "WALK"
+
+        ? state.frame + 1
+        : "-";
+
+
+    document
+        .getElementById("xLabel")
+        .textContent =
+        Math.round(
+            state.x
+        );
+
+
+    document
+        .getElementById("yLabel")
+        .textContent =
+        Math.round(
+            state.y
+        );
+
+
+    document
+        .getElementById("depthLabel")
+        .textContent =
+        state.depth.toFixed(3);
+
+
+    document
+        .getElementById("scaleLabel")
+        .textContent =
+        `${Math.round(
+            visual.finalScale *
+            100
+        )}%`;
+
+
+    document
+        .getElementById("journeysLabel")
+        .textContent =
+        state.completedJourneys;
+}
+
+
+/* =========================================================
+   MAIN LOOP
+   ========================================================= */
+
+let lastTime =
+    performance.now();
+
+
+function loop(now) {
+
+    const dt =
+        Math.min(
+            50,
+            now-lastTime
+        );
+
+
+    lastTime =
+        now;
+
+
+    updateTurn(dt);
+
+    updatePreWalk(dt);
+
+    updateJourney(dt);
+
+    updatePreSit(dt);
+
+    updateSitIdle(dt);
+
+    updateOffscreen(dt);
+
+    render();
+
+
+    requestAnimationFrame(
+        loop
+    );
+}
+
+
+/* =========================================================
+   START
+   ========================================================= */
+
+async function start() {
+
+    try {
+
+        await preloadEverything();
+
+
+        state.world =
+            "ON_SCREEN";
+
+
+        state.mode =
+            "SIT_IDLE";
+
+
+        state.stateTimer =
+            2000;
+
+
+        const visual =
+            getVisual();
+
+
+        const cached =
+            imageCache.get(
+                visual.src
+            );
+
+
+        lumiA.src =
+            cached.src;
+
+
+        applyVisualToLayer(
+            lumiA,
+            visual
+        );
+
+
+        lumiA.style.visibility =
+            "visible";
+
+
+        lumiB.style.visibility =
+            "hidden";
+
+
+        visibleLayer =
+            lumiA;
+
+
+        hiddenLayer =
+            lumiB;
+
+
+        visibleSrc =
+            visual.src;
+
+
+        requestAnimationFrame(
+            loop
+        );
+
+    }
+
+    catch(error) {
+
+        console.error(error);
+
+
+        alert(
+            "A Lumi asset failed to preload. Check the browser console."
+        );
+    }
+}
+
+
+start();
+
+</script>
+
+
+<div id="copyright-notice">
+    &copy; 2026 Lee &amp; Jenna &middot; Lumi &middot; All rights reserved
+</div>
+
+</body>
+</html>
+
+
